@@ -17,12 +17,12 @@
   function emptyCar() {
     return {
       id: uid(), vin: '', year: '', make: '', model: '', trim: '', mileage: '', stage: 'sourced',
-      purchase: { seller: '', purchaseDate: '', paymentMethod: 'Cash', purchasePrice: '', auctionFees: '', taxes: '', transportation: '' },
+      purchase: { sourceType: 'Auction', seller: '', purchaseDate: '', paymentMethod: 'Cash', purchasePrice: '', auctionFees: '', taxes: '', transportation: '' },
       inspection: { damageNotes: '', diagnosticCodes: '', mechanicalInspection: '', estimatedRepairBudget: '', photos: [] },
       documents: { titleStatus: 'Clean', titleReceivedDate: '', notes: '', files: [] },
       parts: [], repairs: [], holdingCosts: [],
       listing: { minimumPrice: '', askingPrice: '', listingDate: '', marketplaceLinks: '', comps: [], photos: [] },
-      leads: [],
+      leads: [], teamTasks: [],
       sale: { salePrice: '', saleDate: '', paymentStatus: 'Not paid', sellingFees: '', titleTransferStatus: 'Not started', billOfSale: null }
     };
   }
@@ -35,6 +35,7 @@
       ...base, ...raw,
       purchase: {
         ...base.purchase, ...(raw.purchase || {}),
+        sourceType: raw.purchase?.sourceType || raw.sourceType || 'Auction',
         seller: raw.purchase?.seller || raw.seller || raw.source || '',
         purchaseDate: raw.purchase?.purchaseDate || raw.purchaseDate || '',
         paymentMethod: raw.purchase?.paymentMethod || raw.paymentMethod || 'Cash',
@@ -58,6 +59,7 @@
       holdingCosts: raw.holdingCosts || [],
       listing: { ...base.listing, ...(raw.listing || {}), comps: raw.listing?.comps || raw.comps || [], photos: raw.listing?.photos || [] },
       leads: raw.leads || [],
+      teamTasks: raw.teamTasks || [],
       sale: {
         ...base.sale, ...(raw.sale || {}),
         salePrice: raw.sale?.salePrice || raw.soldPrice || '',
@@ -121,7 +123,7 @@
   }
   function cardHtml(car) {
     const c = costs(car);
-    const pending = car.repairs.filter(item => item.status !== 'Completed').length + car.parts.filter(item => item.deliveryStatus !== 'Delivered').length;
+    const pending = car.repairs.filter(item => item.status !== 'Completed').length + car.parts.filter(item => item.deliveryStatus !== 'Delivered').length + car.teamTasks.filter(item => item.status !== 'Done').length;
     return `<article class="card" data-open-car="${car.id}"><button class="delete" data-delete-car="${car.id}" aria-label="Delete">×</button>
       <div class="card-title">${esc(carTitle(car))}</div><div class="card-sub">${car.vin ? 'VIN …' + esc(car.vin.slice(-6)) : 'No VIN'} · ${car.mileage ? Number(car.mileage).toLocaleString() + ' mi' : 'No mileage'}</div>
       <div class="card-grid"><div class="line"><span>All-in cost</span><b>${money(c.allIn)}</b></div><div class="line"><span>Pending items</span><b>${pending}</b></div><div class="line"><span>Days held</span><b>${daysHeld(car)}</b></div>${car.stage === 'sold' ? `<div class="line"><span>Net profit</span><b class="profit">${money(c.profit)}</b></div>` : ''}</div></article>`;
@@ -139,8 +141,17 @@
   });
   $('newCarBtn').onclick = () => {
     $('intakeForm').reset(); $('intakeError').textContent = ''; $('vinStatus').textContent = '0/17 characters'; $('vinStatus').className = '';
+    updateAuctionFeeField('Auction');
     $('intakeDialog').showModal();
   };
+  function isNonAuctionSource(sourceType) { return ['Private seller', 'Trade-in'].includes(sourceType); }
+  function updateAuctionFeeField(sourceType) {
+    const disabled = isNonAuctionSource(sourceType);
+    $('auctionFees').disabled = disabled;
+    $('auctionFeesField').classList.toggle('disabled-field', disabled);
+    if (disabled) $('auctionFees').value = '';
+  }
+  $('sourceType').onchange = event => updateAuctionFeeField(event.target.value);
   document.querySelectorAll('[data-close="intake"]').forEach(button => button.onclick = () => $('intakeDialog').close());
   $('vin').oninput = event => {
     event.target.value = event.target.value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '').slice(0, 17);
@@ -166,20 +177,20 @@
     if (!value('make') || !value('model')) { $('intakeError').textContent = 'Enter at least the make and model.'; return; }
     const car = emptyCar();
     Object.assign(car, { vin: value('vin'), year: value('year'), make: value('make'), model: value('model'), trim: value('trim'), mileage: value('mileage') });
-    Object.assign(car.purchase, { seller: value('seller'), purchaseDate: value('purchaseDate'), paymentMethod: value('paymentMethod'), purchasePrice: value('purchasePrice'), auctionFees: value('auctionFees'), taxes: value('taxes'), transportation: value('transportation') });
+    Object.assign(car.purchase, { sourceType: value('sourceType'), seller: value('seller'), purchaseDate: value('purchaseDate'), paymentMethod: value('paymentMethod'), purchasePrice: value('purchasePrice'), auctionFees: value('auctionFees'), taxes: value('taxes'), transportation: value('transportation') });
     car.documents.titleStatus = value('titleStatus');
     cars.push(car); saveCars(); $('intakeDialog').close();
   };
 
   const TABS = [
     ['buying', 'Buying'], ['inspection', 'Inspection'], ['documents', 'Title & Docs'], ['parts', 'Parts'],
-    ['repairs', 'Repairs'], ['holding', 'Holding'], ['listing', 'Listing'], ['leads', 'Leads'], ['sale', 'Sale']
+    ['repairs', 'Repairs'], ['tasks', 'Team Tasks'], ['holding', 'Holding'], ['listing', 'Listing'], ['leads', 'Leads'], ['sale', 'Sale']
   ];
   function openCar(id) { selectedId = id; activeTab = 'buying'; renderDetail(); $('detailDialog').showModal(); }
   function renderDetail() {
     const car = selectedCar();
     if (!car) return $('detailDialog').close();
-    const renderer = { buying: buyingTab, inspection: inspectionTab, documents: documentsTab, parts: partsTab, repairs: repairsTab, holding: holdingTab, listing: listingTab, leads: leadsTab, sale: saleTab }[activeTab];
+    const renderer = { buying: buyingTab, inspection: inspectionTab, documents: documentsTab, parts: partsTab, repairs: repairsTab, tasks: tasksTab, holding: holdingTab, listing: listingTab, leads: leadsTab, sale: saleTab }[activeTab];
     $('detailContent').innerHTML = `<header class="modal-head"><div><h2>${esc(carTitle(car))}</h2><p>${car.vin ? 'VIN ' + esc(car.vin) : 'No VIN'} · ${STAGE_LABELS[car.stage]}</p></div><button class="icon-btn" data-detail-close>×</button></header>
       <nav class="tabs">${TABS.map(([key, label]) => `<button class="tab ${activeTab === key ? 'active' : ''}" data-tab="${key}">${label}</button>`).join('')}</nav>
       <section id="tabContent">${renderer(car)}</section>`;
@@ -193,9 +204,9 @@
   function buyingTab(car) {
     return `<p class="section-note">Purchase source and every acquisition cost paid before repairs begin.</p><div class="form-grid">
       ${input('VIN', 'vin', car.vin)}${input('Year', 'year', car.year)}${input('Make', 'make', car.make)}${input('Model', 'model', car.model)}${input('Trim', 'trim', car.trim)}${input('Mileage', 'mileage', car.mileage, 'number', 'min="0"')}
-      ${input('Seller / auction', 'purchase.seller', car.purchase.seller)}${input('Purchase date', 'purchase.purchaseDate', car.purchase.purchaseDate, 'date')}
+      ${select('Purchase source', 'purchase.sourceType', car.purchase.sourceType, ['Auction', 'Private seller', 'Trade-in', 'Dealer', 'Other'])}${input('Seller / auction name', 'purchase.seller', car.purchase.seller)}${input('Purchase date', 'purchase.purchaseDate', car.purchase.purchaseDate, 'date')}
       ${select('Payment method', 'purchase.paymentMethod', car.purchase.paymentMethod, ['Cash', "Cashier's check", 'Wire transfer', 'Financing', 'Other'])}
-      ${input('Purchase price', 'purchase.purchasePrice', car.purchase.purchasePrice, 'number', 'min="0" step=".01"')}${input('Auction fees', 'purchase.auctionFees', car.purchase.auctionFees, 'number', 'min="0" step=".01"')}${input('Taxes', 'purchase.taxes', car.purchase.taxes, 'number', 'min="0" step=".01"')}${input('Transportation / towing', 'purchase.transportation', car.purchase.transportation, 'number', 'min="0" step=".01"')}
+      ${input('Purchase price', 'purchase.purchasePrice', car.purchase.purchasePrice, 'number', 'min="0" step=".01"')}<label class="field ${isNonAuctionSource(car.purchase.sourceType) ? 'disabled-field' : ''}"><span>Auction fees</span><input type="number" data-path="purchase.auctionFees" value="${esc(car.purchase.auctionFees)}" min="0" step=".01" ${isNonAuctionSource(car.purchase.sourceType) ? 'disabled' : ''}></label>${input('Taxes', 'purchase.taxes', car.purchase.taxes, 'number', 'min="0" step=".01"')}${input('Transportation / towing', 'purchase.transportation', car.purchase.transportation, 'number', 'min="0" step=".01"')}
       </div>${summaryRows(car)}<div class="stage-actions">${STAGES.map(stage => `<button class="btn ${stage === car.stage ? 'primary' : ''}" data-stage="${stage}">${STAGE_LABELS[stage]}</button>`).join('')}</div>`;
   }
   function photoStrip(photos, kind) {
@@ -238,6 +249,21 @@
       <label class="field"><span>Receipt</span><label class="file-upload">Add receipt<input id="repairReceipt" type="file" accept="image/*,.pdf" capture="environment"></label></label>
       <button class="btn primary full" type="submit">+ Add repair</button></form>
       <div class="list">${car.repairs.length ? car.repairs.map(repair => `<article class="item"><div><h4>${esc(repair.work)}</h4><p>${esc(repair.vendor || 'No vendor')} · Due ${esc(repair.dueDate || 'not set')}</p><span class="badge ${repair.status === 'Completed' ? 'done' : ''}">${esc(repair.status || 'Needed')}</span>${repair.receipt ? `<p><button class="btn" data-view-inline-file="repair" data-item-id="${repair.id}">View receipt</button></p>` : ''}</div><div class="item-actions"><b>${money(repair.laborCost)}</b><button class="btn" data-edit-item="repair" data-item-id="${repair.id}">Update</button><button class="btn danger" data-remove-item="repair" data-item-id="${repair.id}">Remove</button></div></article>`).join('') : '<div class="empty">No repair jobs added.</div>'}</div>${summaryRows(car)}`;
+  }
+  const PRIORITY_ORDER = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+  function sortedTasks(tasks) {
+    return [...tasks].sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9) || String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
+  }
+  function taskHtml(task, showCar = false) {
+    const overdue = task.dueDate && task.dueDate < today() && task.status !== 'Done';
+    return `<article class="item ${overdue ? 'task-overdue' : ''}"><div><h4>${esc(task.title)}</h4><p>${showCar ? esc(task.carTitle) + ' · ' : ''}Assigned to: ${esc(task.assignee || 'Unassigned')} · Due ${esc(task.dueDate || 'not set')}</p><p>${esc(task.notes || '')}</p><span class="badge priority-${String(task.priority || 'Medium').toLowerCase()}">${esc(task.priority || 'Medium')}</span> <span class="badge ${task.status === 'Done' ? 'done' : ''}">${esc(task.status || 'To do')}</span>${overdue ? ' <span class="badge priority-critical">OVERDUE</span>' : ''}</div><div class="item-actions">${showCar ? `<button class="btn" data-open-task-car="${task.carId}">Open car</button>` : `<button class="btn" data-edit-item="task" data-item-id="${task.id}">Update</button><button class="btn danger" data-remove-item="task" data-item-id="${task.id}">Remove</button>`}</div></article>`;
+  }
+  function tasksTab(car) {
+    return `<p class="section-note">Assign work by person and priority. Critical and high-priority work appears first.</p><form class="entry-form form-grid" data-add="task">
+      ${input('Task', 'form.taskTitle', '')}${input('Assign to', 'form.taskAssignee', '')}${select('Priority', 'form.taskPriority', 'Medium', ['Critical', 'High', 'Medium', 'Low'])}${input('Due date', 'form.taskDueDate', '', 'date')}
+      <label class="field"><span>Status</span><select data-form="taskStatus"><option>To do</option><option>In progress</option><option>Blocked</option><option>Done</option></select></label>
+      <label class="field full"><span>Notes</span><textarea data-form="taskNotes"></textarea></label><button class="btn primary full" type="submit">+ Assign task</button></form>
+      <div class="list">${car.teamTasks.length ? sortedTasks(car.teamTasks).map(task => taskHtml(task)).join('') : '<div class="empty">No team tasks assigned.</div>'}</div>`;
   }
   function holdingTab(car) {
     return `<p class="section-note">Record every cost incurred while owning the vehicle.</p><form class="entry-form form-grid" data-add="holding">
@@ -331,7 +357,7 @@
     if (stage) { car.stage = stage.dataset.stage; saveCars(true); return; }
     const remove = event.target.closest('[data-remove-item]');
     if (remove) {
-      const maps = { part: 'parts', repair: 'repairs', holding: 'holdingCosts', comp: 'listing.comps', lead: 'leads' };
+      const maps = { part: 'parts', repair: 'repairs', task: 'teamTasks', holding: 'holdingCosts', comp: 'listing.comps', lead: 'leads' };
       const key = maps[remove.dataset.removeItem];
       if (key.includes('.')) car.listing.comps = car.listing.comps.filter(item => item.id !== remove.dataset.itemId);
       else car[key] = car[key].filter(item => item.id !== remove.dataset.itemId);
@@ -356,7 +382,9 @@
   $('detailContent').addEventListener('change', async event => {
     const car = selectedCar();
     if (event.target.matches('[data-path]') && !event.target.dataset.path.startsWith('form.')) {
-      setPath(car, event.target.dataset.path, event.target.value); saveCars(); return;
+      setPath(car, event.target.dataset.path, event.target.value);
+      if (event.target.dataset.path === 'purchase.sourceType' && isNonAuctionSource(event.target.value)) car.purchase.auctionFees = '';
+      saveCars(event.target.dataset.path === 'purchase.sourceType'); return;
     }
     if (event.target.matches('[data-upload]')) {
       try {
@@ -390,6 +418,9 @@
       } else if (type === 'repair') {
         const work = getFormValue(form, 'repairWork'); if (!work) throw new Error('Enter the work needed.');
         car.repairs.push({ id: uid(), work, laborCost: getFormValue(form, 'repairCost'), vendor: getFormValue(form, 'repairVendor'), appointment: getFormValue(form, 'repairAppointment'), dueDate: getFormValue(form, 'repairDueDate'), status: 'Needed', receipt: await fileToData($('repairReceipt').files[0]) });
+      } else if (type === 'task') {
+        const title = getFormValue(form, 'taskTitle'); if (!title) throw new Error('Enter the task.');
+        car.teamTasks.push({ id: uid(), title, assignee: getFormValue(form, 'taskAssignee'), priority: getFormValue(form, 'taskPriority'), dueDate: getFormValue(form, 'taskDueDate'), status: getFormValue(form, 'taskStatus'), notes: getFormValue(form, 'taskNotes') });
       } else if (type === 'holding') {
         car.holdingCosts.push({ id: uid(), category: getFormValue(form, 'holdingCategory'), amount: getFormValue(form, 'holdingAmount'), date: getFormValue(form, 'holdingDate'), notes: getFormValue(form, 'holdingNotes'), receipt: await fileToData($('holdingReceipt').files[0]) });
       } else if (type === 'comp') {
@@ -411,6 +442,12 @@
       const item = car.repairs.find(record => record.id === id);
       item.status = prompt('Status: Needed, Scheduled, In progress, or Completed', item.status) || item.status;
       const cost = prompt('Labor cost', item.laborCost); if (cost !== null) item.laborCost = cost;
+    } else if (type === 'task') {
+      const item = car.teamTasks.find(record => record.id === id);
+      item.status = prompt('Status: To do, In progress, Blocked, or Done', item.status) || item.status;
+      item.priority = prompt('Priority: Critical, High, Medium, or Low', item.priority) || item.priority;
+      item.assignee = prompt('Assigned team member', item.assignee) ?? item.assignee;
+      item.notes = prompt('Task notes', item.notes) ?? item.notes;
     } else if (type === 'lead') {
       const item = car.leads.find(record => record.id === id);
       item.status = prompt('Status: New, Contacted, Negotiating, Accepted, or Declined', item.status) || item.status;
@@ -420,6 +457,21 @@
     saveCars(true);
   }
 
+  $('tasksBtn').onclick = () => { renderGlobalTasks(); $('tasksDialog').showModal(); };
+  function renderGlobalTasks() {
+    const allTasks = cars.flatMap(car => car.teamTasks.map(task => ({ ...task, carId: car.id, carTitle: carTitle(car) })));
+    const openTasks = sortedTasks(allTasks.filter(task => task.status !== 'Done'));
+    const doneTasks = sortedTasks(allTasks.filter(task => task.status === 'Done'));
+    $('tasksContent').innerHTML = `<header class="modal-head"><div><h2>Team task list</h2><p>All assigned work sorted by priority and due date.</p></div><button class="icon-btn" data-tasks-close>×</button></header>
+      <div class="money-grid"><div class="money-box"><strong>${openTasks.length}</strong><span>Open tasks</span></div><div class="money-box"><strong>${openTasks.filter(task => task.priority === 'Critical').length}</strong><span>Critical</span></div><div class="money-box"><strong>${openTasks.filter(task => task.dueDate && task.dueDate < today()).length}</strong><span>Overdue</span></div><div class="money-box"><strong>${doneTasks.length}</strong><span>Completed</span></div></div>
+      <h3>Priority queue</h3><div class="list">${openTasks.length ? openTasks.map(task => taskHtml(task, true)).join('') : '<div class="empty">No open team tasks.</div>'}</div>
+      <h3>Completed</h3><div class="list">${doneTasks.length ? doneTasks.map(task => taskHtml(task, true)).join('') : '<div class="empty">No completed tasks yet.</div>'}</div>`;
+  }
+  $('tasksContent').onclick = event => {
+    if (event.target.closest('[data-tasks-close]')) return $('tasksDialog').close();
+    const open = event.target.closest('[data-open-task-car]');
+    if (open) { $('tasksDialog').close(); openCar(open.dataset.openTaskCar); activeTab = 'tasks'; renderDetail(); }
+  };
   $('reportsBtn').onclick = () => { renderReports(); $('reportsDialog').showModal(); };
   function renderReports() {
     const sold = cars.filter(car => car.stage === 'sold');
@@ -440,17 +492,18 @@
     if (event.target.closest('[data-export-csv]')) exportCsv();
   };
   function exportCsv() {
-    const headers = ['VIN', 'Year', 'Make', 'Model', 'Trim', 'Stage', 'Seller/Auction', 'Purchase Date', 'Purchase Price', 'Auction Fees', 'Taxes', 'Transportation', 'Parts', 'Repairs', 'Holding', 'Selling Fees', 'All-in Cost', 'Sale Price', 'Sale Date', 'Net Profit', 'ROI %', 'Days Held'];
+    const headers = ['VIN', 'Year', 'Make', 'Model', 'Trim', 'Stage', 'Purchase Source', 'Seller/Auction', 'Purchase Date', 'Purchase Price', 'Auction Fees', 'Taxes', 'Transportation', 'Parts', 'Repairs', 'Holding', 'Selling Fees', 'All-in Cost', 'Sale Price', 'Sale Date', 'Net Profit', 'ROI %', 'Days Held'];
     const quote = value => '"' + String(value ?? '').replaceAll('"', '""') + '"';
     const rows = cars.map(car => {
       const c = costs(car);
-      return [car.vin, car.year, car.make, car.model, car.trim, STAGE_LABELS[car.stage], car.purchase.seller, car.purchase.purchaseDate, car.purchase.purchasePrice, car.purchase.auctionFees, car.purchase.taxes, car.purchase.transportation, c.parts, c.repairs, c.holding, c.selling, c.allIn, car.sale.salePrice, car.sale.saleDate, c.profit, c.roi.toFixed(1), daysHeld(car)];
+      return [car.vin, car.year, car.make, car.model, car.trim, STAGE_LABELS[car.stage], car.purchase.sourceType, car.purchase.seller, car.purchase.purchaseDate, car.purchase.purchasePrice, car.purchase.auctionFees, car.purchase.taxes, car.purchase.transportation, c.parts, c.repairs, c.holding, c.selling, c.allIn, car.sale.salePrice, car.sale.saleDate, c.profit, c.roi.toFixed(1), daysHeld(car)];
     });
     const csv = [headers, ...rows].map(row => row.map(quote).join(',')).join('\n');
     const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); link.download = 'flip-tracker-report-' + today() + '.csv'; link.click(); URL.revokeObjectURL(link.href);
   }
   $('detailDialog').onclick = event => { if (event.target === $('detailDialog')) $('detailDialog').close(); };
   $('intakeDialog').onclick = event => { if (event.target === $('intakeDialog')) $('intakeDialog').close(); };
+  $('tasksDialog').onclick = event => { if (event.target === $('tasksDialog')) $('tasksDialog').close(); };
   $('reportsDialog').onclick = event => { if (event.target === $('reportsDialog')) $('reportsDialog').close(); };
   saveCars();
 })();
