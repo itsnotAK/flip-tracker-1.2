@@ -1,0 +1,2043 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Flip</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+  * { box-sizing: border-box; font-family: 'Space Grotesk', sans-serif; }
+  html, body { margin: 0; background: #0F1013; color: #EDEEF1; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  .stamp { font-family: 'Bebas Neue', sans-serif; letter-spacing: 1.5px; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #33373F; border-radius: 4px; }
+  input, select, textarea { font-family: 'Space Grotesk', sans-serif; }
+  button { cursor: pointer; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid #E85D2C; outline-offset: 1px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyATa_p-XxAmHfvbNXKHYwqqOR_aXk5C408",
+  authDomain: "flip-tracker-d359e.firebaseapp.com",
+  projectId: "flip-tracker-d359e",
+  storageBucket: "flip-tracker-d359e.firebasestorage.app",
+  messagingSenderId: "300986723622",
+  appId: "1:300986723622:web:0a3d441c7ac465739425e7"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+</script>
+
+<script>
+const {
+  useState,
+  useEffect,
+  useMemo
+} = React;
+const STAGES = ['considering', 'purchased', 'inspection', 'reconditioning', 'ready', 'listed', 'pending', 'sold', 'archived'];
+const STAGE_LABEL = {
+  considering: 'CONSIDERING',
+  purchased: 'PURCHASED',
+  inspection: 'INSPECTION',
+  reconditioning: 'RECONDITIONING',
+  ready: 'READY TO LIST',
+  listed: 'LISTED',
+  pending: 'SALE PENDING',
+  sold: 'SOLD',
+  archived: 'ARCHIVED'
+};
+const STAGE_COLOR = {
+  considering: '#8B8FA3',
+  purchased: '#D9A441',
+  inspection: '#4C8FBF',
+  reconditioning: '#E85D2C',
+  ready: '#A971D8',
+  listed: '#4C9FE8',
+  pending: '#E8C24C',
+  sold: '#4FA876',
+  archived: '#5B5F68'
+};
+const TITLE_TYPES = ['Clean', 'Salvage', 'Rebuilt', 'Other'];
+const PURCHASE_SOURCES = ['Auction', 'Private seller', 'Trade-in', 'Dealer', 'Wholesale', 'Other'];
+const TASK_CATEGORIES = ['Mechanical', 'Body shop', 'Paint', 'Tires', 'Brakes', 'Oil service', 'Detailing', 'Glass', 'Electrical', 'Keys', 'Inspection', 'Emissions', 'Documents', 'Photography', 'Listing', 'Other'];
+const TASK_STATUSES = ['To do', 'In progress', 'Waiting for parts', 'Waiting for approval', 'At vendor', 'Completed', 'Cancelled'];
+const EXPENSE_CATEGORIES = ['Storage', 'Insurance', 'Fuel', 'Towing', 'Transportation', 'Cleaning', 'Detailing', 'Diagnostic fees', 'State inspection', 'Emissions', 'Registration', 'Advertising', 'Selling fees', 'Dealer fees', 'Other'];
+const LEAD_STATUSES = ['New', 'Contacted', 'Appointment scheduled', 'Test drive', 'Offer received', 'Negotiating', 'Sale pending', 'Sold', 'Lost'];
+const MARKETPLACES = ['Facebook Marketplace', 'Autotrader', 'Cars.com', 'CarGurus', 'Craigslist', 'Dealer website', 'Other'];
+const fmtMoney = n => {
+  const v = Number(n);
+  if (isNaN(v)) return '$0';
+  return v.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0
+  });
+};
+const fmtPct = n => {
+  if (n === null || isNaN(n)) return '—';
+  return (n * 100).toFixed(0) + '%';
+};
+const daysBetween = (a, b) => {
+  if (!a || !b) return null;
+  const d = Math.round((new Date(b) - new Date(a)) / 86400000);
+  return isNaN(d) ? null : d;
+};
+const today = () => new Date().toISOString().slice(0, 10);
+const uid = () => Math.random().toString(36).slice(2, 10);
+function emptyVehicle() {
+  return {
+    id: uid(),
+    vin: '',
+    stockNumber: '',
+    year: '',
+    make: '',
+    model: '',
+    trim: '',
+    engine: '',
+    drivetrain: '',
+    mileage: '',
+    exteriorColor: '',
+    assignedTo: '',
+    stage: 'considering',
+    purchaseSource: 'Auction',
+    sellerName: '',
+    purchaseDate: '',
+    purchasePrice: '',
+    auctionFees: '',
+    transportation: '',
+    taxes: '',
+    titleStatus: 'Not received',
+    titleType: 'Clean',
+    titleReceivedDate: '',
+    inspectionResult: '',
+    inspectorName: '',
+    inspectionDate: '',
+    inspectionNotes: '',
+    tasks: [],
+    expenses: [],
+    comps: [],
+    targetPrice: '',
+    listedDate: '',
+    listingUrl: '',
+    listingDescription: '',
+    marketplace: 'Facebook Marketplace',
+    soldPrice: '',
+    soldDate: '',
+    buyerName: '',
+    createdAt: today()
+  };
+}
+function emptyLead() {
+  return {
+    id: uid(),
+    name: '',
+    phone: '',
+    email: '',
+    vehicleInterest: '',
+    source: '',
+    status: 'New',
+    followUpDate: '',
+    notes: '',
+    offerAmount: ''
+  };
+}
+function App() {
+  const [vehicles, setVehicles] = useState([]);
+  const [leads, setLeads] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [view, setView] = useState('dashboard');
+  const [showIntake, setShowIntake] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const [detailTab, setDetailTab] = useState('overview');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [syncError, setSyncError] = useState('');
+  useEffect(() => {
+    const unsub1 = db.collection('cars').onSnapshot(snap => {
+      setVehicles(snap.docs.map(d => ({
+        ...d.data(),
+        id: d.id
+      })));
+      setLoaded(true);
+      setSyncError('');
+    }, err => {
+      console.error(err);
+      setSyncError('Could not connect to the shared database. Check the Firebase config at the top of this file.');
+      setLoaded(true);
+    });
+    const unsub2 = db.collection('leads').onSnapshot(snap => setLeads(snap.docs.map(d => ({
+      ...d.data(),
+      id: d.id
+    }))), err => console.error(err));
+    return () => {
+      unsub1();
+      unsub2();
+    };
+  }, []);
+  const selected = vehicles.find(v => v.id === selectedId) || null;
+  const updateVehicle = (id, patch) => db.collection('cars').doc(id).set(patch, {
+    merge: true
+  }).catch(e => console.error(e));
+  const deleteVehicle = id => {
+    db.collection('cars').doc(id).delete().catch(e => console.error(e));
+    setConfirmDelete(null);
+    if (selectedId === id) setSelectedId(null);
+  };
+  const addVehicle = data => {
+    const id = uid();
+    db.collection('cars').doc(id).set({
+      ...emptyVehicle(),
+      ...data,
+      id
+    }).catch(e => console.error(e));
+    setShowIntake(false);
+    return id;
+  };
+  const updateLead = (id, patch) => db.collection('leads').doc(id).set(patch, {
+    merge: true
+  }).catch(e => console.error(e));
+  const deleteLead = id => db.collection('leads').doc(id).delete().catch(e => console.error(e));
+  const addLead = data => {
+    const id = uid();
+    db.collection('leads').doc(id).set({
+      ...emptyLead(),
+      ...data,
+      id
+    }).catch(e => console.error(e));
+  };
+  function allInCost(v) {
+    const expenses = (v.expenses || []).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const taskCosts = (v.tasks || []).reduce((s, t) => s + (Number(t.actualCost) || Number(t.estCost) || 0), 0);
+    return (Number(v.purchasePrice) || 0) + (Number(v.auctionFees) || 0) + (Number(v.transportation) || 0) + (Number(v.taxes) || 0) + expenses + taskCosts;
+  }
+  function projectedProfit(v) {
+    return (Number(v.targetPrice) || 0) - allInCost(v);
+  }
+  function openTaskCount(v) {
+    return (v.tasks || []).filter(t => t.status !== 'Completed' && t.status !== 'Cancelled').length;
+  }
+  function daysHeld(v) {
+    return daysBetween(v.purchaseDate || v.createdAt, today()) || 0;
+  }
+  const stats = useMemo(() => {
+    const active = vehicles.filter(v => v.stage !== 'sold' && v.stage !== 'archived');
+    const sold = vehicles.filter(v => v.stage === 'sold');
+    const thisMonth = sold.filter(v => v.soldDate && v.soldDate.slice(0, 7) === today().slice(0, 7));
+    const invested = active.reduce((s, v) => s + allInCost(v), 0);
+    const retailValue = active.reduce((s, v) => s + (Number(v.targetPrice) || 0), 0);
+    const projProfit = active.reduce((s, v) => s + projectedProfit(v), 0);
+    const actualMonthProfit = thisMonth.reduce((s, v) => s + ((Number(v.soldPrice) || 0) - allInCost(v)), 0);
+    const needAttention = active.filter(v => openTaskCount(v) > 0 || projectedProfit(v) < 0);
+    const overdueTasks = active.reduce((s, v) => s + (v.tasks || []).filter(t => t.dueDate && t.dueDate < today() && t.status !== 'Completed' && t.status !== 'Cancelled').length, 0);
+    const titlesNotReceived = active.filter(v => v.titleStatus !== 'Received').length;
+    const readyToList = vehicles.filter(v => v.stage === 'ready').length;
+    const leadsFollowUp = leads.filter(l => l.followUpDate && l.followUpDate <= today() && l.status !== 'Sold' && l.status !== 'Lost').length;
+    const held30 = active.filter(v => daysHeld(v) > 30 && daysHeld(v) <= 60).length;
+    const held60 = active.filter(v => daysHeld(v) > 60 && daysHeld(v) <= 90).length;
+    const held90 = active.filter(v => daysHeld(v) > 90).length;
+    return {
+      activeCount: active.length,
+      invested,
+      retailValue,
+      projProfit,
+      actualMonthProfit,
+      needAttention: needAttention.length,
+      overdueTasks,
+      titlesNotReceived,
+      readyToList,
+      leadsFollowUp,
+      held30,
+      held60,
+      held90
+    };
+  }, [vehicles, leads]);
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.app
+  }, syncError && /*#__PURE__*/React.createElement("div", {
+    style: styles.errorBanner
+  }, syncError), /*#__PURE__*/React.createElement("header", {
+    style: styles.topbar
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "stamp",
+    style: styles.logo
+  }, "FLIP"), /*#__PURE__*/React.createElement("nav", {
+    style: styles.nav
+  }, ['dashboard', 'vehicles', 'calculator', 'leads'].map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    onClick: () => setView(v),
+    style: {
+      ...styles.navBtn,
+      ...(view === v ? styles.navBtnActive : {})
+    }
+  }, v === 'dashboard' ? 'Dashboard' : v === 'vehicles' ? 'Vehicles' : v === 'calculator' ? 'Deal Calculator' : 'Leads'))), /*#__PURE__*/React.createElement("button", {
+    style: styles.addBtn,
+    onClick: () => setShowIntake(true)
+  }, "+ Add Vehicle")), view === 'dashboard' && /*#__PURE__*/React.createElement(Dashboard, {
+    stats: stats,
+    vehicles: vehicles,
+    leads: leads,
+    onOpenVehicle: id => {
+      setSelectedId(id);
+      setDetailTab('overview');
+    },
+    onGoVehicles: () => setView('vehicles')
+  }), view === 'vehicles' && /*#__PURE__*/React.createElement(Board, {
+    vehicles: vehicles,
+    allInCost: allInCost,
+    projectedProfit: projectedProfit,
+    openTaskCount: openTaskCount,
+    daysHeld: daysHeld,
+    onOpen: id => {
+      setSelectedId(id);
+      setDetailTab('overview');
+    },
+    onDelete: id => setConfirmDelete(id),
+    confirmDelete: confirmDelete,
+    onConfirmDelete: deleteVehicle,
+    onCancelDelete: () => setConfirmDelete(null)
+  }), view === 'calculator' && /*#__PURE__*/React.createElement(Calculator, {
+    onConvert: data => {
+      const id = addVehicle(data);
+      setSelectedId(id);
+      setDetailTab('overview');
+      setView('vehicles');
+    }
+  }), view === 'leads' && /*#__PURE__*/React.createElement(Leads, {
+    leads: leads,
+    vehicles: vehicles,
+    onAdd: addLead,
+    onUpdate: updateLead,
+    onDelete: deleteLead
+  }), showIntake && /*#__PURE__*/React.createElement(IntakeModal, {
+    onClose: () => setShowIntake(false),
+    onSave: addVehicle
+  }), selected && /*#__PURE__*/React.createElement(VehicleDetail, {
+    vehicle: selected,
+    tab: detailTab,
+    setTab: setDetailTab,
+    onClose: () => setSelectedId(null),
+    onUpdate: patch => updateVehicle(selected.id, patch),
+    allInCost: allInCost(selected),
+    projectedProfit: projectedProfit(selected)
+  }));
+}
+function Dashboard({
+  stats,
+  vehicles,
+  leads,
+  onOpenVehicle,
+  onGoVehicles
+}) {
+  const attention = vehicles.filter(v => v.stage !== 'sold' && v.stage !== 'archived' && ((v.tasks || []).some(t => t.status !== 'Completed' && t.status !== 'Cancelled') || (Number(v.targetPrice) || 0) - (Number(v.purchasePrice) || 0) < 0)).slice(0, 6);
+  const followUps = leads.filter(l => l.followUpDate && l.followUpDate <= today() && l.status !== 'Sold' && l.status !== 'Lost').slice(0, 6);
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.page
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.statGrid
+  }, /*#__PURE__*/React.createElement(StatCard, {
+    label: "Active inventory",
+    value: stats.activeCount
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Total invested",
+    value: fmtMoney(stats.invested)
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Inventory retail value",
+    value: fmtMoney(stats.retailValue)
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Projected profit",
+    value: fmtMoney(stats.projProfit),
+    accent: stats.projProfit >= 0 ? '#4FA876' : '#D4574A'
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Actual profit this month",
+    value: fmtMoney(stats.actualMonthProfit),
+    accent: stats.actualMonthProfit >= 0 ? '#4FA876' : '#D4574A'
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Vehicles needing attention",
+    value: stats.needAttention,
+    accent: "#E85D2C"
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Overdue tasks",
+    value: stats.overdueTasks,
+    accent: stats.overdueTasks > 0 ? '#D4574A' : undefined
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Titles not received",
+    value: stats.titlesNotReceived
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Ready to list",
+    value: stats.readyToList
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Leads needing follow-up",
+    value: stats.leadsFollowUp,
+    accent: stats.leadsFollowUp > 0 ? '#E8C24C' : undefined
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Held 31-60 days",
+    value: stats.held30
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Held 60+ days",
+    value: stats.held60 + stats.held90,
+    accent: stats.held60 + stats.held90 > 0 ? '#D4574A' : undefined
+  })), /*#__PURE__*/React.createElement("div", {
+    style: styles.dashRow
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.dashCol
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.dashColHeader
+  }, "Vehicles needing attention"), attention.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: styles.emptyText
+  }, "Nothing needs attention right now."), attention.map(v => /*#__PURE__*/React.createElement("div", {
+    key: v.id,
+    style: styles.dashItem,
+    onClick: () => onOpenVehicle(v.id)
+  }, /*#__PURE__*/React.createElement("span", null, [v.year, v.make, v.model].filter(Boolean).join(' ') || 'Untitled vehicle'), /*#__PURE__*/React.createElement("span", {
+    className: "mono",
+    style: {
+      color: STAGE_COLOR[v.stage]
+    }
+  }, STAGE_LABEL[v.stage]))), /*#__PURE__*/React.createElement("button", {
+    style: styles.linkBtn,
+    onClick: onGoVehicles
+  }, "View all vehicles →")), /*#__PURE__*/React.createElement("div", {
+    style: styles.dashCol
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.dashColHeader
+  }, "Leads needing follow-up"), followUps.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: styles.emptyText
+  }, "No follow-ups due today."), followUps.map(l => /*#__PURE__*/React.createElement("div", {
+    key: l.id,
+    style: styles.dashItem
+  }, /*#__PURE__*/React.createElement("span", null, l.name || 'Unnamed lead'), /*#__PURE__*/React.createElement("span", {
+    className: "mono",
+    style: {
+      color: '#E8C24C'
+    }
+  }, l.followUpDate))))));
+}
+function StatCard({
+  label,
+  value,
+  accent
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.statCard
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "mono",
+    style: {
+      ...styles.statValue,
+      color: accent || '#EDEEF1'
+    }
+  }, value), /*#__PURE__*/React.createElement("div", {
+    style: styles.statLabel
+  }, label));
+}
+function Board({
+  vehicles,
+  allInCost,
+  projectedProfit,
+  openTaskCount,
+  daysHeld,
+  onOpen,
+  onDelete,
+  confirmDelete,
+  onConfirmDelete,
+  onCancelDelete
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.page
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.board
+  }, STAGES.map(stage => {
+    const list = vehicles.filter(v => v.stage === stage);
+    return /*#__PURE__*/React.createElement("div", {
+      key: stage,
+      style: styles.column
+    }, /*#__PURE__*/React.createElement("div", {
+      style: styles.columnHeader
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "stamp",
+      style: {
+        ...styles.columnTitle,
+        color: STAGE_COLOR[stage]
+      }
+    }, STAGE_LABEL[stage]), /*#__PURE__*/React.createElement("span", {
+      className: "mono",
+      style: styles.columnCount
+    }, list.length)), /*#__PURE__*/React.createElement("div", {
+      style: styles.columnBody
+    }, list.length === 0 && /*#__PURE__*/React.createElement("div", {
+      style: styles.emptyCol
+    }, "Empty"), list.map(v => /*#__PURE__*/React.createElement(VehicleCard, {
+      key: v.id,
+      v: v,
+      allIn: allInCost(v),
+      profit: projectedProfit(v),
+      openTasks: openTaskCount(v),
+      days: daysHeld(v),
+      onClick: () => onOpen(v.id),
+      onDelete: () => onDelete(v.id),
+      confirming: confirmDelete === v.id,
+      onConfirmDelete: () => onConfirmDelete(v.id),
+      onCancelDelete: onCancelDelete
+    }))));
+  })));
+}
+function VehicleCard({
+  v,
+  allIn,
+  profit,
+  openTasks,
+  days,
+  onClick,
+  onDelete,
+  confirming,
+  onConfirmDelete,
+  onCancelDelete
+}) {
+  const title = [v.year, v.make, v.model].filter(Boolean).join(' ') || 'Untitled vehicle';
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.ticket
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.ticketStub,
+    onClick: onClick
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.ticketTitle
+  }, title), v.trim && /*#__PURE__*/React.createElement("div", {
+    style: styles.ticketTrim
+  }, v.trim), /*#__PURE__*/React.createElement("div", {
+    className: "mono",
+    style: styles.ticketVin
+  }, v.stockNumber ? `#${v.stockNumber}` : v.vin ? `VIN ${v.vin.slice(-6)}` : 'No stock #')), /*#__PURE__*/React.createElement("div", {
+    style: styles.ticketBody,
+    onClick: onClick
+  }, /*#__PURE__*/React.createElement(Row, {
+    label: "All-in cost",
+    value: fmtMoney(allIn)
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Asking",
+    value: v.targetPrice ? fmtMoney(v.targetPrice) : '—'
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Proj. profit",
+    value: fmtMoney(profit),
+    accent: profit >= 0 ? '#4FA876' : '#D4574A'
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Days held",
+    value: days
+  }), openTasks > 0 && /*#__PURE__*/React.createElement(Row, {
+    label: "Open tasks",
+    value: openTasks,
+    accent: "#E85D2C"
+  }), v.titleStatus && v.titleStatus !== 'Received' && /*#__PURE__*/React.createElement(Row, {
+    label: "Title",
+    value: v.titleStatus,
+    accent: "#E8C24C"
+  })), /*#__PURE__*/React.createElement("div", {
+    style: styles.ticketFooter
+  }, !confirming ? /*#__PURE__*/React.createElement("button", {
+    style: styles.iconBtn,
+    onClick: onDelete
+  }, "Delete") : /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: '#D4574A'
+    }
+  }, "Delete?"), /*#__PURE__*/React.createElement("button", {
+    style: {
+      ...styles.iconBtn,
+      color: '#D4574A'
+    },
+    onClick: onConfirmDelete
+  }, "Yes"), /*#__PURE__*/React.createElement("button", {
+    style: styles.iconBtn,
+    onClick: onCancelDelete
+  }, "No"))));
+}
+function Row({
+  label,
+  value,
+  accent
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.row
+  }, /*#__PURE__*/React.createElement("span", {
+    style: styles.rowLabel
+  }, label), /*#__PURE__*/React.createElement("span", {
+    className: "mono",
+    style: {
+      ...styles.rowValue,
+      color: accent
+    }
+  }, value));
+}
+function VinDecodeButton({
+  vin,
+  onDecoded
+}) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  async function decode() {
+    if (!vin || vin.trim().length < 8) {
+      setErr('Enter a full VIN first.');
+      return;
+    }
+    setLoading(true);
+    setErr('');
+    try {
+      const res = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${encodeURIComponent(vin.trim())}?format=json`);
+      const data = await res.json();
+      const r = data.Results && data.Results[0];
+      if (!r) {
+        setErr('No data found for that VIN.');
+        setLoading(false);
+        return;
+      }
+      onDecoded({
+        year: r.ModelYear || '',
+        make: r.Make || '',
+        model: r.Model || '',
+        trim: r.Trim || '',
+        engine: [r.EngineCylinders && `${r.EngineCylinders}-cyl`, r.DisplacementL && `${r.DisplacementL}L`].filter(Boolean).join(' ') || '',
+        drivetrain: r.DriveType || ''
+      });
+    } catch (e) {
+      setErr('Could not reach the VIN decode service.');
+    }
+    setLoading(false);
+  }
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    style: styles.smallBtnWide,
+    onClick: decode,
+    disabled: loading
+  }, loading ? 'Decoding…' : 'Decode VIN'), err && /*#__PURE__*/React.createElement("div", {
+    style: styles.errorText
+  }, err));
+}
+function IntakeModal({
+  onClose,
+  onSave
+}) {
+  const [f, setF] = useState(emptyVehicle());
+  const set = k => e => setF({
+    ...f,
+    [k]: e.target.value
+  });
+  const [error, setError] = useState('');
+  function submit() {
+    if (!f.make.trim() && !f.model.trim() && !f.vin.trim()) {
+      setError('Enter at least a VIN or make/model.');
+      return;
+    }
+    onSave(f);
+  }
+  return /*#__PURE__*/React.createElement(Overlay, {
+    onClose: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.modal
+  }, /*#__PURE__*/React.createElement(ModalHeader, {
+    title: "Add a vehicle",
+    onClose: onClose
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "VIN"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "mono",
+    style: styles.input,
+    value: f.vin,
+    onChange: set('vin'),
+    placeholder: "1HGCV1F3XJA000000"
+  }), /*#__PURE__*/React.createElement(VinDecodeButton, {
+    vin: f.vin,
+    onDecoded: d => setF({
+      ...f,
+      ...d
+    })
+  })))), /*#__PURE__*/React.createElement("div", {
+    style: styles.formGrid
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Stock number"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.stockNumber,
+    onChange: set('stockNumber')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Assigned to"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.assignedTo,
+    onChange: set('assignedTo')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Year"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.year,
+    onChange: set('year')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Make"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.make,
+    onChange: set('make')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Model"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.model,
+    onChange: set('model')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Trim"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.trim,
+    onChange: set('trim')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Mileage"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.mileage,
+    onChange: set('mileage')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Exterior color"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.exteriorColor,
+    onChange: set('exteriorColor')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Purchase source"
+  }, /*#__PURE__*/React.createElement("select", {
+    style: styles.input,
+    value: f.purchaseSource,
+    onChange: set('purchaseSource')
+  }, PURCHASE_SOURCES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s,
+    value: s
+  }, s)))), /*#__PURE__*/React.createElement(Field, {
+    label: "Purchase price"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.purchasePrice,
+    onChange: set('purchasePrice')
+  }))), error && /*#__PURE__*/React.createElement("div", {
+    style: styles.errorText
+  }, error), /*#__PURE__*/React.createElement("div", {
+    style: styles.modalFooter
+  }, /*#__PURE__*/React.createElement("button", {
+    style: styles.secondaryBtn,
+    onClick: onClose
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    style: styles.primaryBtn,
+    onClick: submit
+  }, "Add vehicle"))));
+}
+function VehicleDetail({
+  vehicle,
+  tab,
+  setTab,
+  onClose,
+  onUpdate,
+  allInCost,
+  projectedProfit
+}) {
+  const title = [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(' ') || 'Untitled vehicle';
+  const tabs = ['overview', 'buying', 'inspection', 'recon', 'listing', 'sale'];
+  const set = k => e => onUpdate({
+    [k]: e.target.value
+  });
+  return /*#__PURE__*/React.createElement(Overlay, {
+    onClose: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...styles.modal,
+      maxWidth: 700
+    }
+  }, /*#__PURE__*/React.createElement(ModalHeader, {
+    title: title,
+    subtitle: vehicle.vin ? `VIN ${vehicle.vin}` : vehicle.stockNumber ? `Stock #${vehicle.stockNumber}` : '',
+    onClose: onClose,
+    right: /*#__PURE__*/React.createElement("select", {
+      style: {
+        ...styles.input,
+        width: 170
+      },
+      value: vehicle.stage,
+      onChange: e => onUpdate({
+        stage: e.target.value
+      })
+    }, STAGES.map(s => /*#__PURE__*/React.createElement("option", {
+      key: s,
+      value: s
+    }, STAGE_LABEL[s])))
+  }), /*#__PURE__*/React.createElement("div", {
+    style: styles.tabBar
+  }, tabs.map(t => /*#__PURE__*/React.createElement("button", {
+    key: t,
+    onClick: () => setTab(t),
+    style: {
+      ...styles.tabBtn,
+      ...(tab === t ? styles.tabBtnActive : {})
+    }
+  }, t.charAt(0).toUpperCase() + t.slice(1)))), /*#__PURE__*/React.createElement("div", {
+    style: styles.tabContent
+  }, tab === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: styles.formGrid
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Stock number"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.stockNumber,
+    onChange: set('stockNumber')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Assigned to"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.assignedTo,
+    onChange: set('assignedTo')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Year"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.year,
+    onChange: set('year')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Make"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.make,
+    onChange: set('make')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Model"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.model,
+    onChange: set('model')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Trim"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.trim,
+    onChange: set('trim')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Mileage"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.mileage,
+    onChange: set('mileage')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Exterior color"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.exteriorColor,
+    onChange: set('exteriorColor')
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: styles.summaryBar
+  }, /*#__PURE__*/React.createElement(Row, {
+    label: "All-in cost",
+    value: fmtMoney(allInCost)
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Asking price",
+    value: fmtMoney(vehicle.targetPrice)
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Projected profit",
+    value: fmtMoney(projectedProfit),
+    accent: projectedProfit >= 0 ? '#4FA876' : '#D4574A'
+  }))), tab === 'buying' && /*#__PURE__*/React.createElement("div", {
+    style: styles.formGrid
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Purchase source"
+  }, /*#__PURE__*/React.createElement("select", {
+    style: styles.input,
+    value: vehicle.purchaseSource,
+    onChange: set('purchaseSource')
+  }, PURCHASE_SOURCES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s,
+    value: s
+  }, s)))), /*#__PURE__*/React.createElement(Field, {
+    label: "Seller / auction name"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.sellerName,
+    onChange: set('sellerName')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Purchase date"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    style: styles.input,
+    value: vehicle.purchaseDate,
+    onChange: set('purchaseDate')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Purchase price"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.purchasePrice,
+    onChange: set('purchasePrice')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Auction fees"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.auctionFees,
+    onChange: set('auctionFees'),
+    disabled: vehicle.purchaseSource !== 'Auction'
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Transportation"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.transportation,
+    onChange: set('transportation')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Taxes"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.taxes,
+    onChange: set('taxes')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Title status"
+  }, /*#__PURE__*/React.createElement("select", {
+    style: styles.input,
+    value: vehicle.titleStatus,
+    onChange: set('titleStatus')
+  }, ['Not received', 'Requested', 'Received'].map(s => /*#__PURE__*/React.createElement("option", {
+    key: s,
+    value: s
+  }, s)))), /*#__PURE__*/React.createElement(Field, {
+    label: "Title type"
+  }, /*#__PURE__*/React.createElement("select", {
+    style: styles.input,
+    value: vehicle.titleType,
+    onChange: set('titleType')
+  }, TITLE_TYPES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s,
+    value: s
+  }, s))))), tab === 'inspection' && /*#__PURE__*/React.createElement("div", {
+    style: styles.formGrid
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Inspector name"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.inspectorName,
+    onChange: set('inspectorName')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Inspection date"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    style: styles.input,
+    value: vehicle.inspectionDate,
+    onChange: set('inspectionDate')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Result"
+  }, /*#__PURE__*/React.createElement("select", {
+    style: styles.input,
+    value: vehicle.inspectionResult,
+    onChange: set('inspectionResult')
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "—"), /*#__PURE__*/React.createElement("option", {
+    value: "Pass"
+  }, "Pass"), /*#__PURE__*/React.createElement("option", {
+    value: "Warning"
+  }, "Warning"), /*#__PURE__*/React.createElement("option", {
+    value: "Fail"
+  }, "Fail"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1'
+    }
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Notes (damage, codes, condition)"
+  }, /*#__PURE__*/React.createElement("textarea", {
+    style: styles.textarea,
+    rows: "4",
+    value: vehicle.inspectionNotes,
+    onChange: set('inspectionNotes')
+  })))), tab === 'recon' && /*#__PURE__*/React.createElement(ReconTab, {
+    vehicle: vehicle,
+    onUpdate: onUpdate,
+    allInCost: allInCost
+  }), tab === 'listing' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: styles.formGrid
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Asking price"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.targetPrice,
+    onChange: set('targetPrice')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Marketplace"
+  }, /*#__PURE__*/React.createElement("select", {
+    style: styles.input,
+    value: vehicle.marketplace,
+    onChange: set('marketplace')
+  }, MARKETPLACES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s,
+    value: s
+  }, s)))), /*#__PURE__*/React.createElement(Field, {
+    label: "Listed date"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    style: styles.input,
+    value: vehicle.listedDate,
+    onChange: set('listedDate')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Listing URL"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.listingUrl,
+    onChange: set('listingUrl')
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Listing description"
+  }, /*#__PURE__*/React.createElement("textarea", {
+    style: styles.textarea,
+    rows: "6",
+    value: vehicle.listingDescription,
+    onChange: set('listingDescription'),
+    placeholder: "Write or paste your listing description here."
+  })))), tab === 'sale' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: styles.formGrid
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Buyer name"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.buyerName,
+    onChange: set('buyerName')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Sale date"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    style: styles.input,
+    value: vehicle.soldDate,
+    onChange: set('soldDate')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Sale price"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: vehicle.soldPrice,
+    onChange: set('soldPrice')
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: styles.summaryBar
+  }, /*#__PURE__*/React.createElement(Row, {
+    label: "All-in cost",
+    value: fmtMoney(allInCost)
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Net profit",
+    value: fmtMoney((Number(vehicle.soldPrice) || 0) - allInCost),
+    accent: (Number(vehicle.soldPrice) || 0) - allInCost >= 0 ? '#4FA876' : '#D4574A'
+  })), vehicle.stage !== 'sold' && /*#__PURE__*/React.createElement("div", {
+    style: styles.modalFooter
+  }, /*#__PURE__*/React.createElement("button", {
+    style: styles.primaryBtn,
+    onClick: () => onUpdate({
+      stage: 'sold',
+      soldDate: vehicle.soldDate || today()
+    })
+  }, "Mark as sold"))))));
+}
+function ReconTab({
+  vehicle,
+  onUpdate,
+  allInCost
+}) {
+  const [taskForm, setTaskForm] = useState({
+    title: '',
+    category: 'Mechanical',
+    dueDate: '',
+    estCost: ''
+  });
+  const [expForm, setExpForm] = useState({
+    category: 'Detailing',
+    vendor: '',
+    amount: '',
+    date: today()
+  });
+  const tasks = vehicle.tasks || [];
+  const expenses = vehicle.expenses || [];
+  function addTask() {
+    if (!taskForm.title.trim()) return;
+    onUpdate({
+      tasks: [...tasks, {
+        id: uid(),
+        ...taskForm,
+        status: 'To do',
+        actualCost: ''
+      }]
+    });
+    setTaskForm({
+      title: '',
+      category: 'Mechanical',
+      dueDate: '',
+      estCost: ''
+    });
+  }
+  function updateTask(id, patch) {
+    onUpdate({
+      tasks: tasks.map(t => t.id === id ? {
+        ...t,
+        ...patch
+      } : t)
+    });
+  }
+  function removeTask(id) {
+    onUpdate({
+      tasks: tasks.filter(t => t.id !== id)
+    });
+  }
+  function addExpense() {
+    if (!expForm.amount) return;
+    onUpdate({
+      expenses: [...expenses, {
+        id: uid(),
+        ...expForm
+      }]
+    });
+    setExpForm({
+      category: 'Detailing',
+      vendor: '',
+      amount: '',
+      date: today()
+    });
+  }
+  function removeExpense(id) {
+    onUpdate({
+      expenses: expenses.filter(e => e.id !== id)
+    });
+  }
+  const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const taskTotal = tasks.reduce((s, t) => s + (Number(t.actualCost) || Number(t.estCost) || 0), 0);
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: styles.subHeading
+  }, "Tasks"), /*#__PURE__*/React.createElement("div", {
+    style: styles.addRow
+  }, /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...styles.input,
+      flex: 2
+    },
+    placeholder: "Task title",
+    value: taskForm.title,
+    onChange: e => setTaskForm({
+      ...taskForm,
+      title: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("select", {
+    style: {
+      ...styles.input,
+      flex: 1
+    },
+    value: taskForm.category,
+    onChange: e => setTaskForm({
+      ...taskForm,
+      category: e.target.value
+    })
+  }, TASK_CATEGORIES.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c,
+    value: c
+  }, c))), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    style: {
+      ...styles.input,
+      flex: 1
+    },
+    value: taskForm.dueDate,
+    onChange: e => setTaskForm({
+      ...taskForm,
+      dueDate: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...styles.input,
+      flex: 1
+    },
+    placeholder: "Est cost",
+    value: taskForm.estCost,
+    onChange: e => setTaskForm({
+      ...taskForm,
+      estCost: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("button", {
+    style: styles.smallBtn,
+    onClick: addTask
+  }, "+")), /*#__PURE__*/React.createElement("div", {
+    style: styles.list
+  }, tasks.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: styles.emptyText
+  }, "No tasks yet."), tasks.map(t => /*#__PURE__*/React.createElement("div", {
+    key: t.id,
+    style: styles.listItem
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 2
+    }
+  }, t.title), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      fontSize: 11,
+      color: '#888D96'
+    }
+  }, t.category), /*#__PURE__*/React.createElement("select", {
+    style: {
+      ...styles.input,
+      flex: 1,
+      padding: '4px 6px',
+      fontSize: 11
+    },
+    value: t.status,
+    onChange: e => updateTask(t.id, {
+      status: e.target.value
+    })
+  }, TASK_STATUSES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s,
+    value: s
+  }, s))), /*#__PURE__*/React.createElement("span", {
+    className: "mono",
+    style: {
+      width: 70,
+      textAlign: 'right'
+    }
+  }, fmtMoney(t.actualCost || t.estCost)), /*#__PURE__*/React.createElement("button", {
+    style: styles.iconBtn,
+    onClick: () => removeTask(t.id)
+  }, "×")))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...styles.subHeading,
+      marginTop: 18
+    }
+  }, "Expenses"), /*#__PURE__*/React.createElement("div", {
+    style: styles.addRow
+  }, /*#__PURE__*/React.createElement("select", {
+    style: {
+      ...styles.input,
+      flex: 1
+    },
+    value: expForm.category,
+    onChange: e => setExpForm({
+      ...expForm,
+      category: e.target.value
+    })
+  }, EXPENSE_CATEGORIES.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c,
+    value: c
+  }, c))), /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...styles.input,
+      flex: 1
+    },
+    placeholder: "Vendor",
+    value: expForm.vendor,
+    onChange: e => setExpForm({
+      ...expForm,
+      vendor: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...styles.input,
+      flex: 1
+    },
+    placeholder: "Amount",
+    value: expForm.amount,
+    onChange: e => setExpForm({
+      ...expForm,
+      amount: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("button", {
+    style: styles.smallBtn,
+    onClick: addExpense
+  }, "+")), /*#__PURE__*/React.createElement("div", {
+    style: styles.list
+  }, expenses.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: styles.emptyText
+  }, "No expenses logged yet."), expenses.map(e => /*#__PURE__*/React.createElement("div", {
+    key: e.id,
+    style: styles.listItem
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1
+    }
+  }, e.category), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      fontSize: 12,
+      color: '#888D96'
+    }
+  }, e.vendor), /*#__PURE__*/React.createElement("span", {
+    className: "mono"
+  }, fmtMoney(e.amount)), /*#__PURE__*/React.createElement("button", {
+    style: styles.iconBtn,
+    onClick: () => removeExpense(e.id)
+  }, "×")))), /*#__PURE__*/React.createElement("div", {
+    style: styles.summaryBar
+  }, /*#__PURE__*/React.createElement(Row, {
+    label: "Task costs",
+    value: fmtMoney(taskTotal)
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Expense total",
+    value: fmtMoney(expenseTotal)
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "All-in cost (full vehicle)",
+    value: fmtMoney(allInCost),
+    accent: "#E85D2C"
+  })));
+}
+function Calculator({
+  onConvert
+}) {
+  const [f, setF] = useState({
+    vin: '',
+    mileage: '',
+    sellerPrice: '',
+    auctionFees: '',
+    transportation: '',
+    taxes: '',
+    estRepairs: '',
+    estDetailing: '',
+    sellingFees: '',
+    expectedSellPrice: '',
+    desiredMinProfit: ''
+  });
+  const set = k => e => setF({
+    ...f,
+    [k]: e.target.value
+  });
+  const n = k => Number(f[k]) || 0;
+  const fixedCosts = n('auctionFees') + n('transportation') + n('taxes') + n('estRepairs') + n('estDetailing') + n('sellingFees');
+  const maxBid = n('expectedSellPrice') - n('desiredMinProfit') - fixedCosts;
+  const allIn = n('sellerPrice') + fixedCosts;
+  const expectedProfit = n('expectedSellPrice') - allIn;
+  const roi = allIn > 0 ? expectedProfit / allIn : null;
+  const downside = n('expectedSellPrice') * 0.9 - allIn;
+  const risky = expectedProfit < n('desiredMinProfit') || roi !== null && roi < 0.1;
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.page
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 620
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.subHeading
+  }, "Pre-purchase deal calculator"), /*#__PURE__*/React.createElement("div", {
+    style: styles.formGrid
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "VIN"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "mono",
+    style: styles.input,
+    value: f.vin,
+    onChange: set('vin')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Mileage"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.mileage,
+    onChange: set('mileage')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Seller / current bid"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.sellerPrice,
+    onChange: set('sellerPrice')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Auction fees"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.auctionFees,
+    onChange: set('auctionFees')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Transportation"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.transportation,
+    onChange: set('transportation')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Taxes"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.taxes,
+    onChange: set('taxes')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Estimated repairs"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.estRepairs,
+    onChange: set('estRepairs')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Estimated detailing"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.estDetailing,
+    onChange: set('estDetailing')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Expected selling fees"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.sellingFees,
+    onChange: set('sellingFees')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Expected selling price"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.expectedSellPrice,
+    onChange: set('expectedSellPrice')
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Desired minimum profit"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.desiredMinProfit,
+    onChange: set('desiredMinProfit')
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: styles.summaryBar
+  }, /*#__PURE__*/React.createElement(Row, {
+    label: "Maximum recommended bid",
+    value: fmtMoney(maxBid),
+    accent: "#4C9FE8"
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Estimated all-in cost (at seller price)",
+    value: fmtMoney(allIn)
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Expected profit",
+    value: fmtMoney(expectedProfit),
+    accent: expectedProfit >= 0 ? '#4FA876' : '#D4574A'
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Expected ROI",
+    value: fmtPct(roi)
+  }), /*#__PURE__*/React.createElement(Row, {
+    label: "Profit if sold 10% below asking",
+    value: fmtMoney(downside),
+    accent: downside >= 0 ? '#4FA876' : '#D4574A'
+  })), risky && n('expectedSellPrice') > 0 && /*#__PURE__*/React.createElement("div", {
+    style: styles.errorBanner
+  }, "This deal's margin looks thin relative to your target profit — double-check your estimates before bidding."), /*#__PURE__*/React.createElement("div", {
+    style: styles.modalFooter
+  }, /*#__PURE__*/React.createElement("button", {
+    style: styles.primaryBtn,
+    onClick: () => onConvert({
+      vin: f.vin,
+      mileage: f.mileage,
+      purchasePrice: f.sellerPrice,
+      auctionFees: f.auctionFees,
+      transportation: f.transportation,
+      taxes: f.taxes,
+      targetPrice: f.expectedSellPrice,
+      stage: 'considering'
+    })
+  }, "Convert to inventory vehicle"))));
+}
+function Leads({
+  leads,
+  vehicles,
+  onAdd,
+  onUpdate,
+  onDelete
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [f, setF] = useState(emptyLead());
+  function submit() {
+    if (!f.name.trim()) return;
+    onAdd(f);
+    setF(emptyLead());
+    setShowForm(false);
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.page
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.subHeading
+  }, "Leads"), /*#__PURE__*/React.createElement("button", {
+    style: styles.primaryBtn,
+    onClick: () => setShowForm(!showForm)
+  }, showForm ? 'Cancel' : '+ New lead')), showForm && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...styles.summaryBar,
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.formGrid
+  }, /*#__PURE__*/React.createElement(Field, {
+    label: "Name"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.name,
+    onChange: e => setF({
+      ...f,
+      name: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Phone"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.phone,
+    onChange: e => setF({
+      ...f,
+      phone: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Email"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.email,
+    onChange: e => setF({
+      ...f,
+      email: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Vehicle of interest"
+  }, /*#__PURE__*/React.createElement("select", {
+    style: styles.input,
+    value: f.vehicleInterest,
+    onChange: e => setF({
+      ...f,
+      vehicleInterest: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "—"), vehicles.map(v => /*#__PURE__*/React.createElement("option", {
+    key: v.id,
+    value: [v.year, v.make, v.model].filter(Boolean).join(' ')
+  }, [v.year, v.make, v.model].filter(Boolean).join(' '))))), /*#__PURE__*/React.createElement(Field, {
+    label: "Source"
+  }, /*#__PURE__*/React.createElement("input", {
+    style: styles.input,
+    value: f.source,
+    onChange: e => setF({
+      ...f,
+      source: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Follow-up date"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    style: styles.input,
+    value: f.followUpDate,
+    onChange: e => setF({
+      ...f,
+      followUpDate: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: styles.modalFooter
+  }, /*#__PURE__*/React.createElement("button", {
+    style: styles.primaryBtn,
+    onClick: submit
+  }, "Add lead"))), /*#__PURE__*/React.createElement("div", {
+    style: styles.list
+  }, leads.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: styles.emptyText
+  }, "No leads yet."), leads.map(l => /*#__PURE__*/React.createElement("div", {
+    key: l.id,
+    style: {
+      ...styles.listItem,
+      alignItems: 'flex-start',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 2,
+      minWidth: 140
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700
+    }
+  }, l.name), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888D96'
+    }
+  }, l.phone, " ", l.email), l.vehicleInterest && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888D96'
+    }
+  }, "Interested in: ", l.vehicleInterest)), /*#__PURE__*/React.createElement("select", {
+    style: {
+      ...styles.input,
+      width: 160
+    },
+    value: l.status,
+    onChange: e => onUpdate(l.id, {
+      status: e.target.value
+    })
+  }, LEAD_STATUSES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s,
+    value: s
+  }, s))), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    style: {
+      ...styles.input,
+      width: 140
+    },
+    value: l.followUpDate || '',
+    onChange: e => onUpdate(l.id, {
+      followUpDate: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("button", {
+    style: styles.iconBtn,
+    onClick: () => onDelete(l.id)
+  }, "Delete")))));
+}
+function Field({
+  label,
+  children
+}) {
+  return /*#__PURE__*/React.createElement("label", {
+    style: styles.field
+  }, /*#__PURE__*/React.createElement("span", {
+    style: styles.fieldLabel
+  }, label), children);
+}
+function Overlay({
+  children,
+  onClose
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.overlay,
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation()
+  }, children));
+}
+function ModalHeader({
+  title,
+  subtitle,
+  onClose,
+  right
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: styles.modalHeader
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: styles.modalTitle
+  }, title), subtitle && /*#__PURE__*/React.createElement("div", {
+    className: "mono",
+    style: styles.modalSubtitle
+  }, subtitle)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center'
+    }
+  }, right, /*#__PURE__*/React.createElement("button", {
+    style: styles.iconBtnLarge,
+    onClick: onClose
+  }, "×")));
+}
+const styles = {
+  app: {
+    background: '#0F1013',
+    color: '#EDEEF1',
+    minHeight: '100vh'
+  },
+  errorBanner: {
+    background: '#2A1815',
+    border: '1px solid #D4574A',
+    color: '#F0A99C',
+    borderRadius: 6,
+    padding: '10px 14px',
+    fontSize: 13,
+    margin: '0 20px 14px'
+  },
+  topbar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 24,
+    padding: '14px 20px',
+    borderBottom: '1px solid #2C3038',
+    flexWrap: 'wrap'
+  },
+  logo: {
+    fontSize: 24,
+    color: '#E85D2C'
+  },
+  nav: {
+    display: 'flex',
+    gap: 4,
+    flex: 1,
+    flexWrap: 'wrap'
+  },
+  navBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#888D96',
+    padding: '8px 12px',
+    fontSize: 13,
+    borderRadius: 4
+  },
+  navBtnActive: {
+    color: '#EDEEF1',
+    background: '#1D2025'
+  },
+  addBtn: {
+    background: '#E85D2C',
+    color: '#1D1200',
+    border: 'none',
+    borderRadius: 4,
+    padding: '9px 14px',
+    fontWeight: 700,
+    fontSize: 13
+  },
+  page: {
+    padding: 20,
+    maxWidth: 1300,
+    margin: '0 auto'
+  },
+  statGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 10,
+    marginBottom: 20
+  },
+  statCard: {
+    background: '#1D2025',
+    border: '1px solid #2C3038',
+    borderRadius: 6,
+    padding: '12px 14px'
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: 500
+  },
+  statLabel: {
+    fontSize: 11,
+    color: '#888D96',
+    marginTop: 2
+  },
+  dashRow: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 14
+  },
+  dashCol: {
+    background: '#1D2025',
+    border: '1px solid #2C3038',
+    borderRadius: 6,
+    padding: 14
+  },
+  dashColHeader: {
+    fontSize: 13,
+    fontWeight: 700,
+    marginBottom: 10,
+    color: '#888D96'
+  },
+  dashItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '8px 0',
+    borderBottom: '1px solid #2C3038',
+    fontSize: 13,
+    cursor: 'pointer'
+  },
+  linkBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#E85D2C',
+    fontSize: 12,
+    padding: '10px 0 0',
+    textAlign: 'left'
+  },
+  board: {
+    display: 'flex',
+    gap: 12,
+    overflowX: 'auto',
+    paddingBottom: 10
+  },
+  column: {
+    background: '#191B20',
+    border: '1px solid #2C3038',
+    borderRadius: 6,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 200,
+    minWidth: 220,
+    flex: '0 0 220px'
+  },
+  columnHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '10px 12px',
+    borderBottom: '1px solid #2C3038'
+  },
+  columnTitle: {
+    fontSize: 14,
+    letterSpacing: 1
+  },
+  columnCount: {
+    fontSize: 12,
+    color: '#888D96',
+    background: '#24272D',
+    padding: '2px 8px',
+    borderRadius: 10
+  },
+  columnBody: {
+    padding: 10,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10
+  },
+  emptyCol: {
+    fontSize: 12,
+    color: '#5B5F68',
+    textAlign: 'center',
+    padding: '20px 6px'
+  },
+  ticket: {
+    background: '#1D2025',
+    border: '1px solid #2C3038',
+    borderRadius: 4,
+    cursor: 'pointer'
+  },
+  ticketStub: {
+    padding: '10px 12px 8px',
+    borderBottom: '2px dashed #2C3038'
+  },
+  ticketTitle: {
+    fontSize: 13,
+    fontWeight: 700
+  },
+  ticketTrim: {
+    fontSize: 11,
+    color: '#888D96'
+  },
+  ticketVin: {
+    fontSize: 10,
+    color: '#5B5F68',
+    marginTop: 4
+  },
+  ticketBody: {
+    padding: '6px 12px'
+  },
+  ticketFooter: {
+    padding: '4px 10px 8px',
+    display: 'flex',
+    justifyContent: 'flex-end'
+  },
+  row: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: 12,
+    padding: '3px 0'
+  },
+  rowLabel: {
+    color: '#888D96'
+  },
+  rowValue: {
+    color: '#EDEEF1'
+  },
+  iconBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#5B5F68',
+    padding: 4,
+    borderRadius: 4,
+    fontSize: 12
+  },
+  iconBtnLarge: {
+    background: 'none',
+    border: '1px solid #2C3038',
+    color: '#EDEEF1',
+    padding: '4px 10px',
+    borderRadius: 4,
+    fontSize: 16
+  },
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 50,
+    padding: 16,
+    overflowY: 'auto'
+  },
+  modal: {
+    background: '#191B20',
+    border: '1px solid #2C3038',
+    borderRadius: 8,
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '85vh',
+    overflowY: 'auto',
+    padding: 20
+  },
+  modalHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    flexWrap: 'wrap',
+    gap: 10
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 700
+  },
+  modalSubtitle: {
+    fontSize: 11,
+    color: '#888D96',
+    marginTop: 2
+  },
+  modalFooter: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 16
+  },
+  formGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 12
+  },
+  field: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4
+  },
+  fieldLabel: {
+    fontSize: 11,
+    color: '#888D96'
+  },
+  input: {
+    background: '#24272D',
+    border: '1px solid #33373F',
+    borderRadius: 4,
+    color: '#EDEEF1',
+    padding: '8px 10px',
+    fontSize: 13,
+    width: '100%'
+  },
+  textarea: {
+    width: '100%',
+    background: '#24272D',
+    border: '1px solid #33373F',
+    borderRadius: 4,
+    color: '#EDEEF1',
+    padding: 10,
+    fontSize: 13,
+    lineHeight: 1.5
+  },
+  primaryBtn: {
+    background: '#E85D2C',
+    color: '#1D1200',
+    border: 'none',
+    borderRadius: 4,
+    padding: '8px 14px',
+    fontWeight: 700,
+    fontSize: 13
+  },
+  secondaryBtn: {
+    background: 'none',
+    border: '1px solid #33373F',
+    color: '#EDEEF1',
+    borderRadius: 4,
+    padding: '8px 14px',
+    fontSize: 13
+  },
+  smallBtn: {
+    background: '#E85D2C',
+    color: '#1D1200',
+    border: 'none',
+    borderRadius: 4,
+    padding: '8px 12px',
+    fontWeight: 700
+  },
+  smallBtnWide: {
+    background: '#24272D',
+    border: '1px solid #33373F',
+    color: '#EDEEF1',
+    borderRadius: 4,
+    padding: '8px 12px',
+    fontSize: 12
+  },
+  addRow: {
+    display: 'flex',
+    gap: 8,
+    marginBottom: 12,
+    flexWrap: 'wrap'
+  },
+  list: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    marginBottom: 12
+  },
+  listItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    background: '#1D2025',
+    border: '1px solid #2C3038',
+    borderRadius: 4,
+    padding: '8px 10px',
+    fontSize: 13
+  },
+  emptyText: {
+    fontSize: 12,
+    color: '#5B5F68',
+    padding: '10px 0'
+  },
+  summaryBar: {
+    background: '#1D2025',
+    border: '1px solid #2C3038',
+    borderRadius: 4,
+    padding: '10px 14px',
+    marginTop: 14
+  },
+  errorText: {
+    color: '#D4574A',
+    fontSize: 12,
+    marginTop: 6
+  },
+  subHeading: {
+    fontSize: 15,
+    fontWeight: 700,
+    marginBottom: 10
+  },
+  tabBar: {
+    display: 'flex',
+    gap: 4,
+    borderBottom: '1px solid #2C3038',
+    marginBottom: 16,
+    flexWrap: 'wrap'
+  },
+  tabBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#888D96',
+    padding: '8px 12px',
+    fontSize: 13,
+    borderBottom: '2px solid transparent'
+  },
+  tabBtnActive: {
+    color: '#E85D2C',
+    borderBottom: '2px solid #E85D2C'
+  }
+};
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));</script>
+</body>
+</html>
